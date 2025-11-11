@@ -1,11 +1,5 @@
-# Generated files - should not be committed
+# API response logs - exclude large API response files
 api_responses.jsonl
-gas_poor_candidates.csv
-gas_poor_candidates_detailed.csv
-gas_poor_clean_images/
-*.png
-*.jpg
-*.jpeg
 
 # Python
 __pycache__/
@@ -29,6 +23,6 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Logs
+# Logs (but keep API responses as it's already excluded above)
 *.log
 
