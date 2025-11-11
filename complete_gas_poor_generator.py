@@ -80,7 +80,7 @@ def get_gas_info(subhalo_id, simulation=None, save_response=True):
         return None
 
 def generate_csv_candidates(num_candidates: int = 100, force_regenerate: bool = False):
-    """Generate CSV with proven high gas mass candidates."""
+    """Generate CSV with low gas mass candidates (gas-poor galaxies)."""
     csv_file = pathlib.Path("gas_poor_candidates.csv")
     
     # Initialize API response log file
@@ -112,28 +112,29 @@ def generate_csv_candidates(num_candidates: int = 100, force_regenerate: bool = 
     # Known proven candidates with high gas mass (TNG50-1 specific - empty for TNG100-1)
     proven_subhalos = []  # No proven candidates for TNG100-1, start fresh
     
-    # Progressive criteria levels - STARTING WITH LOOSER CRITERIA for TNG100-1
+    # STRICT criteria levels for LOW GAS MASS (gas-poor galaxies)
+    # Focus on galaxies with low gas mass and low gas fraction
     criteria_levels = [
         {
-            "name": "Level 0 (Lenient Start)",
-            "min_gas_mass": 1e4,      # 10K - Very low threshold
-            "max_gas_mass": 1e12,     # 1T - Very high threshold
-            "min_stellar_mass": 1e5,  # 100K - Low threshold
-            "max_gas_fraction": 0.80  # 80% - High threshold
+            "name": "Level 0 (Strict - Low Gas)",
+            "min_gas_mass": 1e5,      # 100K - Minimum detectable gas
+            "max_gas_mass": 1e9,      # 1B - MAXIMUM gas mass (STRICT UPPER LIMIT)
+            "min_stellar_mass": 1e7,  # 10M - Minimum stellar mass
+            "max_gas_fraction": 0.15  # 15% - MAXIMUM gas fraction (STRICT - very gas-poor)
         },
         {
-            "name": "Level 1 (Very Lenient)",
-            "min_gas_mass": 1e3,      # 1K - Even lower
-            "max_gas_mass": 1e13,     # 10T - Even higher
-            "min_stellar_mass": 1e4,  # 10K - Lower
-            "max_gas_fraction": 0.90  # 90% - Higher
+            "name": "Level 1 (Moderate - Low Gas)",
+            "min_gas_mass": 5e4,      # 50K - Slightly lower minimum
+            "max_gas_mass": 2e9,      # 2B - Slightly higher maximum
+            "min_stellar_mass": 5e6,  # 5M - Lower stellar mass
+            "max_gas_fraction": 0.20  # 20% - Slightly higher gas fraction
         },
         {
-            "name": "Level 2 (Minimal)",
-            "min_gas_mass": 1e2,      # 100 - Minimal
-            "max_gas_mass": 1e14,     # 100T - Very high
-            "min_stellar_mass": 1e3,  # 1K - Minimal
-            "max_gas_fraction": 0.95  # 95% - Very high
+            "name": "Level 2 (Lenient - Low Gas)",
+            "min_gas_mass": 1e4,      # 10K - Lower minimum
+            "max_gas_mass": 5e9,      # 5B - Higher maximum
+            "min_stellar_mass": 1e6,  # 1M - Lower stellar mass
+            "max_gas_fraction": 0.30  # 30% - Higher gas fraction (still gas-poor)
         }
     ]
     
@@ -154,16 +155,17 @@ def generate_csv_candidates(num_candidates: int = 100, force_regenerate: bool = 
     # Then search for additional candidates with progressive criteria relaxation and jump strategy
     if len(candidates) < num_candidates:
         print(f"\nSearching for {num_candidates - len(candidates)} additional candidates...")
-        print("Using intelligent search strategy:")
-        print("  - Progressive criteria relaxation (starting with lenient criteria)")
+        print("Using intelligent search strategy for LOW GAS MASS candidates:")
+        print("  - STRICT criteria: max gas mass 1B Msun, max gas fraction 15%")
+        print("  - Progressive criteria relaxation (starting with strict criteria)")
         print("  - Jump/search: skip ranges if no candidates found")
         print("  - Multi-simulation support: will try TNG50-1, TNG300-1 if needed")
         
-        # Search parameters - More lenient for faster results
+        # Search parameters - Optimized for finding low gas mass candidates
         MAX_SUBHALO_ID = 20000  # Upper limit: check up to subhalo 20,000
-        CONSECUTIVE_WITHOUT_FIND = 1000  # Relax criteria faster if 1000 consecutive subhalos yield no candidates
+        CONSECUTIVE_WITHOUT_FIND = 1000  # Relax criteria if 1000 consecutive subhalos yield no candidates
         RANGE_SIZE = 5000  # Check ranges of 5000 subhalos at a time
-        MIN_CANDIDATES_PER_RANGE = 3  # If we find fewer than this in a range, jump to next range (lowered for faster jumping)
+        MIN_CANDIDATES_PER_RANGE = 2  # If we find fewer than this in a range, jump to next range
         
         print(f"Search strategy:")
         print(f"  Maximum subhalo ID to check: {MAX_SUBHALO_ID:,}")
@@ -440,7 +442,7 @@ def generate_csv_candidates(num_candidates: int = 100, force_regenerate: bool = 
         print(f"  - The search reached its limits (max subhalo ID or consecutive checks)")
         print(f"\nProceeding with {len(candidates)} candidates...")
     else:
-        print(f"\n[SUCCESS] Found {len(candidates)} high gas mass candidates!")
+        print(f"\n[SUCCESS] Found {len(candidates)} low gas mass candidates!")
     
     # Create CSV files
     detail_file = pathlib.Path("gas_poor_candidates_detailed.csv")
@@ -448,10 +450,12 @@ def generate_csv_candidates(num_candidates: int = 100, force_regenerate: bool = 
     with csv_file.open("w", newline="") as f:
         writer = csv.writer(f)
         for c in candidates:
-            filename = f"gas_poor_{c['id']:06d}.png"
             sim = c.get('simulation', SIMULATION)  # Use candidate's simulation or default
+            subhalo_id = c['id']
+            # Filename format: gas_poor_{simulation}_{subhalo_id:06d}.png
+            filename = f"gas_poor_{sim}_{subhalo_id:06d}.png"
             base_url = f"https://www.tng-project.org/api/{sim}"
-            url = f"{base_url}/snapshots/{SNAPSHOT}/subhalos/{c['id']}/"
+            url = f"{base_url}/snapshots/{SNAPSHOT}/subhalos/{subhalo_id}/"
             writer.writerow([filename, url])
     
     with detail_file.open("w", newline="") as f:
@@ -562,32 +566,39 @@ def generate_images(csv_file: pathlib.Path, num_images: int = 100):
         reader = csv.reader(f)
         for row in reader:
             if len(row) >= 2:
-                entries.append((row[0], row[1]))
+                entries.append((row[0], row[1]))  # (filename, url)
     
     print(f"\nFound {len(entries)} candidates in CSV")
     
     # Check existing images and find the highest image number
     existing_images = set()
-    existing_combinations = set()  # Track (subhalo_id, size_factor, depth_factor) combinations
+    existing_combinations = set()  # Track (simulation, subhalo_id, size_factor, depth_factor) combinations
     max_existing_num = 0
     for img_file in OUT_DIR.glob("*.png"):
         existing_images.add(img_file.name)
-        # Extract image number and parameters from filename (e.g., "gas_poor_001_000012_s0.15_d0.8.png")
+        # Extract parameters from filename (e.g., "gas_poor_TNG100-1_000012_001_s0.15_d0.8.png")
         try:
             parts = img_file.stem.split('_')
-            if len(parts) >= 2 and parts[0] == "gas" and parts[1] == "poor":
-                img_num = int(parts[2])
-                max_existing_num = max(max_existing_num, img_num)
-                
-                # Extract subhalo_id, size_factor, and depth_factor from filename
-                if len(parts) >= 6:
-                    subhalo_id = parts[3]  # e.g., "000012"
-                    size_factor = parts[4].replace('s', '')  # e.g., "0.15"
-                    depth_factor = parts[5].replace('d', '')  # e.g., "0.8"
-                    combination = (subhalo_id, size_factor, depth_factor)
+            if len(parts) >= 4 and parts[0] == "gas" and parts[1] == "poor":
+                # New format: gas_poor_{simulation}_{subhalo_id}_{image_num}_s{size}_d{depth}
+                simulation = parts[2]  # e.g., "TNG100-1"
+                subhalo_id = parts[3]  # e.g., "000012"
+                if len(parts) >= 7:
+                    img_num = int(parts[4])
+                    max_existing_num = max(max_existing_num, img_num)
+                    size_factor = parts[5].replace('s', '')  # e.g., "0.15"
+                    depth_factor = parts[6].replace('d', '')  # e.g., "0.8"
+                    combination = (simulation, subhalo_id, size_factor, depth_factor)
                     existing_combinations.add(combination)
         except (ValueError, IndexError):
-            pass
+            # Try old format for backward compatibility
+            try:
+                parts = img_file.stem.split('_')
+                if len(parts) >= 2 and parts[0] == "gas" and parts[1] == "poor":
+                    img_num = int(parts[2])
+                    max_existing_num = max(max_existing_num, img_num)
+            except (ValueError, IndexError):
+                pass
     
     print(f"Found {len(existing_images)} existing images")
     print(f"Found {len(existing_combinations)} unique (subhalo, size, depth) combinations")
@@ -626,22 +637,44 @@ def generate_images(csv_file: pathlib.Path, num_images: int = 100):
         # Cycle through candidates based on current image number
         candidate_idx = (current_image_num - 1) % len(entries)
         filename_base, base_url = entries[candidate_idx]
-        subhalo_id = filename_base.split('_')[2].split('.')[0]  # Extract subhalo ID
+        
+        # Parse filename format: gas_poor_{simulation}_{subhalo_id:06d}.png
+        # e.g., "gas_poor_TNG100-1_000012.png"
+        parts = filename_base.replace('.png', '').split('_')
+        if len(parts) >= 4 and parts[0] == "gas" and parts[1] == "poor":
+            simulation = parts[2]  # e.g., "TNG100-1"
+            subhalo_id = parts[3]  # e.g., "000012" (already zero-padded)
+        else:
+            # Fallback: try to extract from old format or URL
+            simulation = SIMULATION
+            # Try to extract from URL
+            if 'TNG100-1' in base_url:
+                simulation = "TNG100-1"
+            elif 'TNG50-1' in base_url:
+                simulation = "TNG50-1"
+            elif 'TNG300-1' in base_url:
+                simulation = "TNG300-1"
+            # Extract subhalo_id from URL or filename
+            try:
+                subhalo_id = filename_base.split('_')[-1].replace('.png', '')
+            except:
+                subhalo_id = f"{candidate_idx:06d}"
         
         # Create unique filename with multiple variation parameters
         size_factor = size_factors[(current_image_num - 1) % len(size_factors)]
         depth_factor = depth_factors[((current_image_num - 1) // len(size_factors)) % len(depth_factors)]
         
         # Check if this combination already exists (regardless of image number)
-        combination = (subhalo_id, f"{size_factor:.2f}", f"{depth_factor:.1f}")
+        combination = (simulation, subhalo_id, f"{size_factor:.2f}", f"{depth_factor:.1f}")
         if combination in existing_combinations:
             # This exact combination already exists, skip it
-            print(f"[{current_image_num}/{num_images}] SKIPPED - combination already exists: subhalo {subhalo_id}, size {size_factor:.2f}, depth {depth_factor:.1f}")
+            print(f"[{current_image_num}/{num_images}] SKIPPED - combination already exists: {simulation} subhalo {subhalo_id}, size {size_factor:.2f}, depth {depth_factor:.1f}")
             current_image_num += 1
             continue
         
-        # Create unique filename
-        filename = f"gas_poor_{current_image_num:03d}_{subhalo_id}_s{size_factor:.2f}_d{depth_factor:.1f}.png"
+        # Create unique filename with simulation and subhalo_id
+        # Format: gas_poor_{simulation}_{subhalo_id}_{image_num:03d}_s{size_factor}_d{depth_factor}.png
+        filename = f"gas_poor_{simulation}_{subhalo_id}_{current_image_num:03d}_s{size_factor:.2f}_d{depth_factor:.1f}.png"
         
         if filename in existing_images:
             print(f"[{current_image_num}/{num_images}] {filename} - SKIPPED (filename already exists)")
