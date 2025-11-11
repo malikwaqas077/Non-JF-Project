@@ -1,0 +1,34 @@
+# Generated files - should not be committed
+api_responses.jsonl
+gas_poor_candidates.csv
+gas_poor_candidates_detailed.csv
+gas_poor_clean_images/
+*.png
+*.jpg
+*.jpeg
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
