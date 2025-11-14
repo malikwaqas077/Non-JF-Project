@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Complete Gas-Poor Image Generator
-1. Generates CSV with proven high gas mass candidates
+Complete Gas-Rich Image Generator
+1. Generates CSV with medium-high gas mass candidates (gas-rich galaxies)
 2. Generates images using those candidates with variations
 """
 import csv, pathlib, requests, time, json
@@ -9,8 +9,8 @@ from PIL import Image, ImageOps
 import io, numpy as np
 
 print("="*70)
-print("COMPLETE GAS-POOR IMAGE GENERATOR")
-print("Generates CSV + Images with proven high gas mass candidates")
+print("COMPLETE GAS-RICH IMAGE GENERATOR")
+print("Generates CSV + Images with medium-high gas mass candidates")
 print("="*70)
 
 API_KEY = "faa0959886d51fa3258568782eca5f78"
@@ -79,8 +79,58 @@ def get_gas_info(subhalo_id, simulation=None, save_response=True):
                 f.write("\n")
         return None
 
+def query_subhalos_by_gas_mass(simulation, min_gas_mass, max_gas_mass, min_stellar_mass, limit=100, offset=0):
+    """Query subhalos using API filtering - MUCH more efficient than sequential checking!
+    
+    Args:
+        simulation: Simulation name (e.g., 'TNG100-1')
+        min_gas_mass: Minimum gas mass in Msun
+        max_gas_mass: Maximum gas mass in Msun
+        min_stellar_mass: Minimum stellar mass in Msun
+        limit: Number of results per page
+        offset: Offset for pagination
+    
+    Returns:
+        dict with 'count' (total matching) and 'results' (list of subhalo IDs)
+    """
+    base_url = f"https://www.tng-project.org/api/{simulation}"
+    
+    # Convert to API units (API uses 1e10 Msun as base unit)
+    min_gas_api = min_gas_mass / 1e10
+    max_gas_api = max_gas_mass / 1e10
+    min_stellar_api = min_stellar_mass / 1e10
+    
+    # Build query URL with filters
+    url = f"{base_url}/snapshots/{SNAPSHOT}/subhalos/"
+    params = {
+        "mass_gas__gt": min_gas_api,
+        "mass_gas__lt": max_gas_api,
+        "mass_stars__gt": min_stellar_api,
+        "limit": limit,
+        "offset": offset
+    }
+    
+    headers = {"api-key": API_KEY}
+    
+    try:
+        r = requests.get(url, params=params, headers=headers, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        
+        # Extract subhalo IDs from results
+        subhalo_ids = [item["id"] for item in data.get("results", [])]
+        
+        return {
+            "count": data.get("count", 0),
+            "next": data.get("next"),
+            "subhalo_ids": subhalo_ids
+        }
+    except Exception as e:
+        print(f"  [ERROR] Query failed: {e}")
+        return {"count": 0, "next": None, "subhalo_ids": []}
+
 def generate_csv_candidates(num_candidates: int = 100, force_regenerate: bool = False):
-    """Generate CSV with low gas mass candidates (gas-poor galaxies)."""
+    """Generate CSV with medium-high gas mass candidates (gas-rich galaxies with visible gas)."""
     csv_file = pathlib.Path("gas_poor_candidates.csv")
     
     # Initialize API response log file
@@ -112,29 +162,29 @@ def generate_csv_candidates(num_candidates: int = 100, force_regenerate: bool = 
     # Known proven candidates with high gas mass (TNG50-1 specific - empty for TNG100-1)
     proven_subhalos = []  # No proven candidates for TNG100-1, start fresh
     
-    # STRICT criteria levels for LOW GAS MASS (gas-poor galaxies)
-    # Focus on galaxies with low gas mass and low gas fraction
+    # Criteria levels for MEDIUM-HIGH GAS MASS (gas-rich galaxies with visible gas)
+    # Focus on galaxies with substantial gas mass that will be visible in images
     criteria_levels = [
         {
-            "name": "Level 0 (Strict - Low Gas)",
-            "min_gas_mass": 1e5,      # 100K - Minimum detectable gas
-            "max_gas_mass": 1e9,      # 1B - MAXIMUM gas mass (STRICT UPPER LIMIT)
-            "min_stellar_mass": 1e7,  # 10M - Minimum stellar mass
-            "max_gas_fraction": 0.15  # 15% - MAXIMUM gas fraction (STRICT - very gas-poor)
+            "name": "Level 0 (Strict - Medium-High Gas)",
+            "min_gas_mass": 1e9,      # 1B - MINIMUM gas mass (ensures visible gas)
+            "max_gas_mass": 1e12,     # 1T - Maximum gas mass
+            "min_stellar_mass": 1e8,  # 100M - Minimum stellar mass
+            "max_gas_fraction": 0.80  # 80% - Maximum gas fraction (allows gas-rich galaxies)
         },
         {
-            "name": "Level 1 (Moderate - Low Gas)",
-            "min_gas_mass": 5e4,      # 50K - Slightly lower minimum
-            "max_gas_mass": 2e9,      # 2B - Slightly higher maximum
-            "min_stellar_mass": 5e6,  # 5M - Lower stellar mass
-            "max_gas_fraction": 0.20  # 20% - Slightly higher gas fraction
+            "name": "Level 1 (Moderate - Medium Gas)",
+            "min_gas_mass": 5e8,      # 500M - Lower minimum but still substantial
+            "max_gas_mass": 1e12,     # 1T - Maximum gas mass
+            "min_stellar_mass": 5e7,  # 50M - Lower stellar mass
+            "max_gas_fraction": 0.85  # 85% - Higher gas fraction
         },
         {
-            "name": "Level 2 (Lenient - Low Gas)",
-            "min_gas_mass": 1e4,      # 10K - Lower minimum
-            "max_gas_mass": 5e9,      # 5B - Higher maximum
-            "min_stellar_mass": 1e6,  # 1M - Lower stellar mass
-            "max_gas_fraction": 0.30  # 30% - Higher gas fraction (still gas-poor)
+            "name": "Level 2 (Lenient - Medium Gas)",
+            "min_gas_mass": 1e8,      # 100M - Lower minimum
+            "max_gas_mass": 1e12,     # 1T - Maximum gas mass
+            "min_stellar_mass": 1e7,  # 10M - Lower stellar mass
+            "max_gas_fraction": 0.90  # 90% - Higher gas fraction
         }
     ]
     
@@ -152,284 +202,108 @@ def generate_csv_candidates(num_candidates: int = 100, force_regenerate: bool = 
             checked_subhalos.add(subhalo_id)
             print(f"  Added subhalo {subhalo_id}: {info['gas_mass']:.2e} Msun gas")
     
-    # Then search for additional candidates with progressive criteria relaxation and jump strategy
+    # Then search for additional candidates using API filtering (MUCH more efficient!)
     if len(candidates) < num_candidates:
         print(f"\nSearching for {num_candidates - len(candidates)} additional candidates...")
-        print("Using intelligent search strategy for LOW GAS MASS candidates:")
-        print("  - STRICT criteria: max gas mass 1B Msun, max gas fraction 15%")
+        print("Using API FILTERING strategy for MEDIUM-HIGH GAS MASS candidates:")
+        print("  - Query API directly for subhalos matching gas mass and stellar mass criteria")
+        print("  - Then check gas fraction for filtered candidates")
         print("  - Progressive criteria relaxation (starting with strict criteria)")
-        print("  - Jump/search: skip ranges if no candidates found")
         print("  - Multi-simulation support: will try TNG50-1, TNG300-1 if needed")
-        
-        # Search parameters - Optimized for finding low gas mass candidates
-        MAX_SUBHALO_ID = 20000  # Upper limit: check up to subhalo 20,000
-        CONSECUTIVE_WITHOUT_FIND = 1000  # Relax criteria if 1000 consecutive subhalos yield no candidates
-        RANGE_SIZE = 5000  # Check ranges of 5000 subhalos at a time
-        MIN_CANDIDATES_PER_RANGE = 2  # If we find fewer than this in a range, jump to next range
-        
-        print(f"Search strategy:")
-        print(f"  Maximum subhalo ID to check: {MAX_SUBHALO_ID:,}")
-        print(f"  Range size: {RANGE_SIZE:,} subhalos")
-        print(f"  Will jump ranges if fewer than {MIN_CANDIDATES_PER_RANGE} candidates found")
-        print(f"  Will relax criteria if {CONSECUTIVE_WITHOUT_FIND:,} consecutive subhalos yield no candidates")
+        print("  - MUCH FASTER than sequential checking!")
+        print("  - Minimum gas mass: 1B Msun (ensures visible gas in images)")
         
         current_criteria_level = 0
         current_simulation_idx = 0
-        current_simulation = AVAILABLE_SIMULATIONS[current_simulation_idx]
-        checked_count = 0
-        consecutive_without_find = 0
-        last_checked_at_level = {}  # Track which subhalos were checked at which level
-        subhalo_data_cache = {}  # Cache API responses to avoid re-fetching
-        
         found_ids = {c['id'] for c in candidates}  # Track IDs of already found candidates
-        recheck_queue = []  # Queue of subhalos to re-check with relaxed criteria
-        
-        # Define search ranges with jump strategy
-        search_ranges = []
-        for start in range(1, MAX_SUBHALO_ID + 1, RANGE_SIZE):
-            end = min(start + RANGE_SIZE - 1, MAX_SUBHALO_ID)
-            search_ranges.append((start, end))
-        
-        current_range_idx = 0
-        i = search_ranges[0][0] if search_ranges else 1
-        range_start_idx = i
-        candidates_found_in_range = 0
-        
-        if search_ranges:
-            range_start, range_end = search_ranges[0]
-            print(f"Starting search in {current_simulation}, Range 1: IDs {range_start}-{range_end}")
         
         while len(candidates) < num_candidates:
-            # Check if we need to switch simulation or jump to next range
-            if current_range_idx < len(search_ranges):
-                range_start, range_end = search_ranges[current_range_idx]
-                
-                # Check if we've finished this range
-                if i > range_end:
-                    # Evaluate if we should continue in this range or jump
-                    checked_in_range = sum(1 for (sim, sid) in last_checked_at_level.keys() 
-                                         if sim == current_simulation and range_start <= sid <= range_end)
-                    
-                    if checked_in_range >= RANGE_SIZE * 0.8:  # Checked at least 80% of range
-                        if candidates_found_in_range < MIN_CANDIDATES_PER_RANGE:
-                            print(f"\n[INFO] Range {range_start}-{range_end} yielded only {candidates_found_in_range} candidates.")
-                            print(f"Jumping to next range...")
-                            current_range_idx += 1
-                            candidates_found_in_range = 0
-                            
-                            # If we've exhausted all ranges in this simulation, try next simulation
-                            if current_range_idx >= len(search_ranges):
-                                if current_simulation_idx < len(AVAILABLE_SIMULATIONS) - 1:
-                                    current_simulation_idx += 1
-                                    current_simulation = AVAILABLE_SIMULATIONS[current_simulation_idx]
-                                    current_range_idx = 0
-                                    print(f"\n[INFO] Switching to simulation: {current_simulation}")
-                                    # Reset some tracking for new simulation
-                                    last_checked_at_level = {}
-                                    consecutive_without_find = 0
-                                else:
-                                    print(f"\n[WARNING] Exhausted all simulations and ranges.")
-                                    break
-                            
-                            if current_range_idx < len(search_ranges):
-                                range_start, range_end = search_ranges[current_range_idx]
-                                i = range_start
-                                range_start_idx = i
-                                print(f"Now searching Range {current_range_idx+1}: IDs {range_start}-{range_end} in {current_simulation}")
-                                continue
-                        else:
-                            # Found enough candidates, continue to next range
-                            current_range_idx += 1
-                            candidates_found_in_range = 0
-                            if current_range_idx < len(search_ranges):
-                                range_start, range_end = search_ranges[current_range_idx]
-                                i = range_start
-                                range_start_idx = i
-                                print(f"Moving to Range {current_range_idx+1}: IDs {range_start}-{range_end} in {current_simulation}")
-                                continue
+            current_simulation = AVAILABLE_SIMULATIONS[current_simulation_idx]
+            criteria = criteria_levels[current_criteria_level]
             
-            # First, re-check any subhalos in the queue with current criteria
-            if recheck_queue:
-                recheck_id = recheck_queue.pop(0)
-                if recheck_id in found_ids:
-                    continue  # Skip if already found
+            print(f"\n[Level {current_criteria_level}] Searching in {current_simulation} with criteria:")
+            print(f"  Gas mass: {criteria['min_gas_mass']:.0e} - {criteria['max_gas_mass']:.0e} Msun")
+            print(f"  Stellar mass: >= {criteria['min_stellar_mass']:.0e} Msun")
+            print(f"  Max gas fraction: {criteria['max_gas_fraction']:.1%}")
+            
+            # Query API for subhalos matching gas mass and stellar mass criteria
+            offset = 0
+            page_size = 100  # Process 100 at a time
+            found_in_this_level = 0
+            checked_in_this_level = 0
+            
+            while len(candidates) < num_candidates and offset < 10000:  # Limit to prevent infinite loops
+                query_result = query_subhalos_by_gas_mass(
+                    simulation=current_simulation,
+                    min_gas_mass=criteria['min_gas_mass'],
+                    max_gas_mass=criteria['max_gas_mass'],
+                    min_stellar_mass=criteria['min_stellar_mass'],
+                    limit=page_size,
+                    offset=offset
+                )
                 
-                # Get cached data or fetch if not cached
-                cache_key = (current_simulation, recheck_id)
-                if cache_key in subhalo_data_cache:
-                    info = subhalo_data_cache[cache_key]
-                else:
-                    info = get_gas_info(recheck_id, simulation=current_simulation)
-                    if info:
-                        subhalo_data_cache[cache_key] = info
+                if query_result['count'] == 0:
+                    print(f"  No subhalos found matching criteria in {current_simulation}")
+                    break
                 
-                if info and info['gas_mass'] > 0:
-                    criteria = criteria_levels[current_criteria_level]
-                    meets_criteria = (
-                        criteria['min_gas_mass'] <= info['gas_mass'] <= criteria['max_gas_mass'] and 
-                        info['gas_fraction'] < criteria['max_gas_fraction'] and
-                        info['stellar_mass'] >= criteria['min_stellar_mass']
-                    )
+                print(f"  Found {query_result['count']:,} potential candidates (checking page {offset//page_size + 1}...)")
+                
+                # Check each subhalo ID for gas fraction
+                for subhalo_id in query_result['subhalo_ids']:
+                    if subhalo_id in found_ids:
+                        continue  # Skip already found candidates
                     
-                    if meets_criteria:
+                    checked_in_this_level += 1
+                    info = get_gas_info(subhalo_id, simulation=current_simulation)
+                    
+                    if not info:
+                        continue
+                    
+                    # Check gas fraction (API can't filter by this, so we check manually)
+                    if info['gas_fraction'] < criteria['max_gas_fraction']:
+                        # This candidate qualifies!
                         info['criteria_level'] = current_criteria_level
                         info['simulation'] = current_simulation
                         candidates.append(info)
-                        found_ids.add(recheck_id)
-                        consecutive_without_find = 0
-                        candidates_found_in_range += 1
-                        print(f"  Found subhalo {info['id']} in {current_simulation} (Level {current_criteria_level}, re-checked): {info['gas_mass']:.2e} Msun gas")
-                continue
-            
-            # Check if we're still in a valid range
-            if current_range_idx >= len(search_ranges):
-                # Try next simulation
-                if current_simulation_idx < len(AVAILABLE_SIMULATIONS) - 1:
-                    current_simulation_idx += 1
-                    current_simulation = AVAILABLE_SIMULATIONS[current_simulation_idx]
-                    current_range_idx = 0
-                    print(f"\n[INFO] Exhausted all ranges in previous simulation.")
-                    print(f"[INFO] Switching to simulation: {current_simulation}")
-                    last_checked_at_level = {}
-                    consecutive_without_find = 0
-                    if search_ranges:
-                        range_start, range_end = search_ranges[0]
-                        i = range_start
-                        range_start_idx = i
-                        print(f"Starting search in {current_simulation}, Range 1: IDs {range_start}-{range_end}")
-                        continue
-                else:
-                    print(f"\n[WARNING] Exhausted all simulations and ranges.")
-                    break
-            
-            if current_range_idx < len(search_ranges):
-                range_start, range_end = search_ranges[current_range_idx]
-            else:
-                break  # No more ranges
-            
-            # Skip proven candidates and already found candidates
-            if i in proven_subhalos or i in found_ids:
-                i += 1
-                if i > range_end:
-                    i = range_end + 1  # Will trigger range check on next iteration
-                continue
-            
-            # Get current criteria
-            criteria = criteria_levels[current_criteria_level]
-            
-            # Only check subhalos we haven't checked at this level yet
-            cache_key = (current_simulation, i)
-            if cache_key in last_checked_at_level and last_checked_at_level[cache_key] >= current_criteria_level:
-                i += 1
-                if i > range_end:
-                    i = range_end + 1
-                continue
-            
-            info = get_gas_info(i, simulation=current_simulation)
-            checked_count += 1
-            last_checked_at_level[cache_key] = current_criteria_level
-            consecutive_without_find += 1
-            
-            # Cache the data for potential re-checking
-            if info:
-                subhalo_data_cache[cache_key] = info
-            
-            if info and info['gas_mass'] > 0:
-                # Check if this subhalo meets current criteria
-                meets_criteria = (
-                    criteria['min_gas_mass'] <= info['gas_mass'] <= criteria['max_gas_mass'] and 
-                    info['gas_fraction'] < criteria['max_gas_fraction'] and
-                    info['stellar_mass'] >= criteria['min_stellar_mass']
-                )
+                        found_ids.add(subhalo_id)
+                        found_in_this_level += 1
+                        print(f"  ✓ Found subhalo {subhalo_id} in {current_simulation}: gas={info['gas_mass']:.2e} Msun, frac={info['gas_fraction']:.2%}")
+                        
+                        if len(candidates) >= num_candidates:
+                            break
+                    
+                    # Small delay to avoid overwhelming API
+                    time.sleep(0.01)
                 
-                if meets_criteria:
-                    info['criteria_level'] = current_criteria_level
-                    info['simulation'] = current_simulation
-                    candidates.append(info)
-                    found_ids.add(i)  # Add to found set
-                    consecutive_without_find = 0  # Reset counter when we find one
-                    candidates_found_in_range += 1
-                    print(f"  Found subhalo {info['id']} in {current_simulation} (Level {current_criteria_level}): {info['gas_mass']:.2e} Msun gas")
-                else:
-                    # Didn't qualify at this level - add to recheck queue for when criteria relax
-                    # Only add if it has gas (zero gas won't qualify at any level)
-                    if i not in found_ids and info['gas_mass'] > 0:
-                        if i not in recheck_queue:
-                            recheck_queue.append(i)
+                # Check if we have more pages
+                if not query_result['next'] or len(candidates) >= num_candidates:
+                    break
+                
+                offset += page_size
+                
+                # Progress update
+                if offset % 1000 == 0:
+                    print(f"    Processed {offset:,}/{query_result['count']:,} candidates, found {found_in_this_level} qualified so far...")
             
-            # Check if we've gone too long without finding candidates - relax criteria
-            if consecutive_without_find >= CONSECUTIVE_WITHOUT_FIND:
+            print(f"  Level {current_criteria_level} complete: checked {checked_in_this_level} candidates, found {found_in_this_level} qualified")
+            
+            # If we didn't find enough candidates, relax criteria or switch simulation
+            if len(candidates) < num_candidates:
                 if current_criteria_level < len(criteria_levels) - 1:
-                    # Move to next criteria level
+                    # Try next criteria level
                     current_criteria_level += 1
                     new_criteria = criteria_levels[current_criteria_level]
-                    consecutive_without_find = 0  # Reset counter
-                    
-                    # Add all previously checked subhalos (that didn't qualify) to recheck queue
-                    # Only add those we haven't found yet and that have gas
-                    for (sim, subhalo_id) in last_checked_at_level.keys():
-                        if sim == current_simulation and subhalo_id not in found_ids and subhalo_id not in proven_subhalos:
-                            # Check if this subhalo has gas (from cache or need to check)
-                            cache_key = (sim, subhalo_id)
-                            if cache_key in subhalo_data_cache:
-                                cached_info = subhalo_data_cache[cache_key]
-                                if cached_info and cached_info.get('gas_mass', 0) > 0:
-                                    if subhalo_id not in recheck_queue:
-                                        recheck_queue.append(subhalo_id)
-                            else:
-                                # Not in cache, add to queue (will check when we get to it)
-                                if subhalo_id not in recheck_queue:
-                                    recheck_queue.append(subhalo_id)
-                    
-                    print(f"\n[INFO] No new candidates found in last {CONSECUTIVE_WITHOUT_FIND:,} subhalos.")
-                    print(f"Relaxing criteria to {new_criteria['name']}:")
-                    print(f"  Min gas mass: {new_criteria['min_gas_mass']:.0e} Msun")
-                    print(f"  Max gas mass: {new_criteria['max_gas_mass']:.0e} Msun")
-                    print(f"  Min stellar mass: {new_criteria['min_stellar_mass']:.0e} Msun")
-                    print(f"  Max gas fraction: {new_criteria['max_gas_fraction']:.1%}")
-                    print(f"Re-checking {len(recheck_queue)} previously checked subhalos with relaxed criteria...")
-                    print(f"Then continuing forward from subhalo {i}...")
+                    print(f"\n[INFO] Relaxing criteria to {new_criteria['name']}")
+                elif current_simulation_idx < len(AVAILABLE_SIMULATIONS) - 1:
+                    # Try next simulation with strictest criteria
+                    current_simulation_idx += 1
+                    current_criteria_level = 0
+                    print(f"\n[INFO] Switching to simulation: {AVAILABLE_SIMULATIONS[current_simulation_idx]}")
+                    print(f"[INFO] Resetting to strictest criteria (Level 0)")
                 else:
-                    # Already at most lenient level - try switching to next simulation
-                    print(f"\n[WARNING] No new candidates found in last {CONSECUTIVE_WITHOUT_FIND:,} subhalos.")
-                    print(f"Already at most lenient criteria level in {current_simulation}.")
-                    
-                    # Try switching to next simulation
-                    if current_simulation_idx < len(AVAILABLE_SIMULATIONS) - 1:
-                        current_simulation_idx += 1
-                        current_simulation = AVAILABLE_SIMULATIONS[current_simulation_idx]
-                        current_criteria_level = 0  # Reset to strictest criteria for new simulation
-                        current_range_idx = 0
-                        consecutive_without_find = 0
-                        last_checked_at_level = {}  # Reset tracking for new simulation
-                        recheck_queue = []  # Clear recheck queue
-                        
-                        if search_ranges:
-                            range_start, range_end = search_ranges[0]
-                            i = range_start
-                            range_start_idx = i
-                            candidates_found_in_range = 0
-                        
-                        print(f"[INFO] Switching to simulation: {current_simulation}")
-                        print(f"[INFO] Resetting to strictest criteria (Level 0) for new simulation.")
-                        if search_ranges:
-                            print(f"Starting search in {current_simulation}, Range 1: IDs {range_start}-{range_end}")
-                        continue
-                    else:
-                        # All simulations exhausted
-                        print(f"[WARNING] All simulations exhausted. Stopping search.")
-                        break
-            
-            # Progress update every 150 subhalos checked
-            if checked_count % 150 == 0:
-                print(f"    Checked {checked_count} subhalos in {current_simulation}, found {len(candidates)} candidates (Level {current_criteria_level}, Range {current_range_idx+1}/{len(search_ranges)})...")
-            
-            # Increment i, but stay within current range
-            i += 1
-            if i > range_end:
-                i = range_end + 1  # Will trigger range check on next iteration
-            
-            time.sleep(0.005)
+                    # All simulations and criteria levels exhausted
+                    print(f"\n[WARNING] Exhausted all simulations and criteria levels.")
+                    break
     
     # Limit to requested number
     candidates = candidates[:num_candidates]
@@ -439,10 +313,10 @@ def generate_csv_candidates(num_candidates: int = 100, force_regenerate: bool = 
         print(f"This may be because:")
         print(f"  - The selection criteria are too strict")
         print(f"  - There aren't enough qualifying subhalos in the dataset")
-        print(f"  - The search reached its limits (max subhalo ID or consecutive checks)")
+        print(f"  - All simulations and criteria levels were exhausted")
         print(f"\nProceeding with {len(candidates)} candidates...")
     else:
-        print(f"\n[SUCCESS] Found {len(candidates)} low gas mass candidates!")
+        print(f"\n[SUCCESS] Found {len(candidates)} medium-high gas mass candidates!")
     
     # Create CSV files
     detail_file = pathlib.Path("gas_poor_candidates_detailed.csv")
@@ -741,7 +615,7 @@ def generate_images(csv_file: pathlib.Path, num_images: int = 100):
 
 def main():
     """Main function to run the complete pipeline."""
-    print("Complete Gas-Poor Image Generator")
+    print("Complete Gas-Rich Image Generator")
     print("This script will:")
     print("1. Generate a CSV with high gas mass candidates")
     print("2. Generate images using those candidates")
