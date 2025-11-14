@@ -4,7 +4,7 @@ Complete Gas-Rich Image Generator
 1. Generates CSV with medium-high gas mass candidates (gas-rich galaxies)
 2. Generates images using those candidates with variations
 """
-import csv, pathlib, requests, time, json
+import csv, pathlib, requests, time, json, sys, os
 from PIL import Image, ImageOps
 import io, numpy as np
 
@@ -166,22 +166,22 @@ def generate_csv_candidates(num_candidates: int = 100, force_regenerate: bool = 
     # Focus on galaxies with substantial gas mass that will be visible in images
     criteria_levels = [
         {
-            "name": "Level 0 (Strict - Medium-High Gas)",
-            "min_gas_mass": 1e9,      # 1B - MINIMUM gas mass (ensures visible gas)
+            "name": "Level 0 (Strict - High Gas)",
+            "min_gas_mass": 3e9,      # 3B - Higher minimum gas mass to ensure strong signal
             "max_gas_mass": 1e12,     # 1T - Maximum gas mass
             "min_stellar_mass": 1e8,  # 100M - Minimum stellar mass
             "max_gas_fraction": 0.80  # 80% - Maximum gas fraction (allows gas-rich galaxies)
         },
         {
-            "name": "Level 1 (Moderate - Medium Gas)",
-            "min_gas_mass": 5e8,      # 500M - Lower minimum but still substantial
+            "name": "Level 1 (Moderate - Medium-High Gas)",
+            "min_gas_mass": 2e9,      # 2B - Still firmly medium-high gas
             "max_gas_mass": 1e12,     # 1T - Maximum gas mass
             "min_stellar_mass": 5e7,  # 50M - Lower stellar mass
             "max_gas_fraction": 0.85  # 85% - Higher gas fraction
         },
         {
             "name": "Level 2 (Lenient - Medium Gas)",
-            "min_gas_mass": 1e8,      # 100M - Lower minimum
+            "min_gas_mass": 1e9,      # 1B - New floor; still medium gas, no low-gas cases
             "max_gas_mass": 1e12,     # 1T - Maximum gas mass
             "min_stellar_mass": 1e7,  # 10M - Lower stellar mass
             "max_gas_fraction": 0.90  # 90% - Higher gas fraction
@@ -267,7 +267,7 @@ def generate_csv_candidates(num_candidates: int = 100, force_regenerate: bool = 
                         candidates.append(info)
                         found_ids.add(subhalo_id)
                         found_in_this_level += 1
-                        print(f"  ✓ Found subhalo {subhalo_id} in {current_simulation}: gas={info['gas_mass']:.2e} Msun, frac={info['gas_fraction']:.2%}")
+                        print(f"  [OK] Found subhalo {subhalo_id} in {current_simulation}: gas={info['gas_mass']:.2e} Msun, frac={info['gas_fraction']:.2%}")
                         
                         if len(candidates) >= num_candidates:
                             break
@@ -646,25 +646,40 @@ def main():
         print(f"Highest image number: {max_existing_num}")
         print(f"{'='*70}")
     
-    # Get user input
-    try:
-        num_candidates = int(input("\nHow many candidates do you want in the CSV? (default: 100): ") or "100")
-        
+    # Get user input (default to non-interactive mode when stdin is not a TTY)
+    default_candidates = 100
+    default_images = 100
+    auto_defaults = os.environ.get("AUTO_GENERATE_DEFAULTS") == "1"
+    interactive = sys.stdin.isatty() and not auto_defaults
+    
+    if interactive:
+        try:
+            num_candidates = int(input("\nHow many candidates do you want in the CSV? (default: 100): ") or str(default_candidates))
+            
+            if existing_count > 0:
+                print(f"\nYou currently have {existing_count} images (up to image #{max_existing_num})")
+                additional_input = input(f"How many MORE images do you want to generate? (default: 100): ") or str(default_images)
+                additional_images = int(additional_input)
+                num_images = max_existing_num + additional_images
+                print(f"Will generate {additional_images} more images (total target: {num_images})")
+            else:
+                num_images = int(input("How many images do you want to generate? (default: 100): ") or str(default_images))
+        except (ValueError, EOFError):
+            print("Invalid or missing input, using defaults: 100 candidates, 100 images")
+            num_candidates = default_candidates
+            if existing_count > 0:
+                num_images = max_existing_num + default_images
+            else:
+                num_images = default_images
+    else:
+        num_candidates = default_candidates
         if existing_count > 0:
-            print(f"\nYou currently have {existing_count} images (up to image #{max_existing_num})")
-            additional_input = input(f"How many MORE images do you want to generate? (default: 100): ") or "100"
-            additional_images = int(additional_input)
-            num_images = max_existing_num + additional_images
-            print(f"Will generate {additional_images} more images (total target: {num_images})")
+            num_images = max_existing_num + default_images
         else:
-            num_images = int(input("How many images do you want to generate? (default: 100): ") or "100")
-    except ValueError:
-        print("Invalid input, using defaults: 100 candidates, 100 images")
-        num_candidates = 100
-        if existing_count > 0:
-            num_images = max_existing_num + 100
-        else:
-            num_images = 100
+            num_images = default_images
+        reason = "non-interactive mode" if not sys.stdin.isatty() else "AUTO_GENERATE_DEFAULTS=1"
+        print(f"\n[INFO] {reason} detected; using defaults: "
+              f"{num_candidates} candidates, {default_images} images")
     
     # Step 1: Generate CSV
     csv_file = generate_csv_candidates(num_candidates)
